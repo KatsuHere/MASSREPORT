@@ -1,150 +1,110 @@
 import json
-import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 from pyrogram import Client, filters
 from pyrogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
 from info import Config, Txt
 
-
 config_path = Path("config.json")
 
 
-@Client.on_message(filters.private & filters.chat(Config.SUDO) & filters.command('make_config'))
-async def make_config(bot: Client, msg: Message):
+@Client.on_message(filters.private & filters.user(Config.SUDO) & filters.command('add_account'))
+async def add_account(bot: Client, cmd: Message):
     try:
         if config_path.exists():
-            return await msg.reply_text(text="**You have already made a config first delete it then you'll able to make it config**\n\n Use /del_config", reply_to_message_id=msg.id)
+            with open(config_path, 'r', encoding='utf-8') as file:
+                config = json.load(file)
         else:
+            return await cmd.reply_text(text="Anda belum membuat konfigurasi! \n\n Silakan buat konfigurasi dengan menggunakan /make_config", reply_to_message_id=cmd.id)
 
-            while True:
+        try:
+            session = await bot.ask(text=Txt.SEND_SESSION_MSG, chat_id=cmd.chat.id, filters=filters.text, timeout=60)
+        except:
+            await bot.send_message(cmd.from_user.id, "Error!!\n\nWaktu permintaan habis.\nMulai ulang dengan menggunakan /add_account", reply_to_message_id=cmd.id)
+            return
 
-                try:
-                    n = await bot.ask(text=Txt.SEND_NUMBERS_MSG, chat_id=msg.chat.id, filters=filters.text, timeout=60)
-                except:
-                    await bot.send_message(msg.from_user.id, "Error!!\n\nRequest timed out.\nRestart by using /make_config", reply_to_message_id=n.id)
-                    return
+        ms = await cmd.reply_text('**Silakan Tunggu...**', reply_to_message_id=cmd.id)
 
-                try:
-                    target = await bot.ask(text=Txt.SEND_TARGET_CHANNEL, chat_id=msg.chat.id, filters=filters.text, timeout=60)
-                except:
+        for account in config['accounts']:
+            if account['Session_String'] == session.text:
+                return await ms.edit(text=f"**Akun {account['OwnerName']} sudah ada dalam konfigurasi, Anda tidak dapat menambahkan akun yang sama lebih dari satu kali 🤡**\n\n Error !")
 
-                    await bot.send_message(msg.from_user.id, "Error!!\n\nRequest timed out.\nRestart by using /make_config", reply_to_message_id=msg.id)
-                    return
+        # Jalankan perintah shell dan tangkap outputnya
+        try:
+            process = subprocess.Popen(
+                ["python", f"login.py", f"{config['Target']}", f"{session.text}"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        except Exception as err:
+            await bot.send_message(cmd.chat.id, text=f"<b>ERROR :</b>\n<pre>{err}</pre>")
+            return
 
-                if str(n.text).isnumeric():
+        # Gunakan communicate() untuk berinteraksi dengan proses
+        stdout, stderr = process.communicate()
+        return_code = process.wait()
 
-                    if not str(target.text).isnumeric():
-                        break
-                    else:
-                        await msg.reply_text(text="⚠️ **Pleae Send Valid Target Channel Link or Username !**", reply_to_message_id=target.id)
-                        continue
+        # Periksa kode kembali untuk melihat apakah perintah berhasil
+        if return_code == 0:
+            output_bytes = stdout
+            output_string = output_bytes.decode('utf-8').replace('\r\n', '\n')
+            AccountHolder = json.loads(output_string)
+        else:
+            return await ms.edit('**Terjadi Kesalahan, Silakan Periksa Input Anda Apakah Sudah Diisi Dengan Benar!**')
 
-                else:
-                    await msg.reply_text(text="⚠️ **Pleae Send Integer Number not String !**", reply_to_message_id=n.id)
-                    continue
-
-            group_target_id = target.text
-            gi = re.sub("(@)|(https://)|(http://)|(t.me/)",
-                        "", group_target_id)
-
-            try:
-                await bot.get_chat(gi)
-            except Exception as e:
-                return await msg.reply_text(text=f"{e} \n\nError !", reply_to_message_id=target.id)
-
-            config = {
-                "Target": gi,
-                "accounts": []
+        try:
+            NewConfig = {
+                "Target": config['Target'],
+                "accounts": list(config['accounts'])
             }
 
-            for _ in range(int(n.text)):
-                try:
-                    session = await bot.ask(text=Txt.SEND_SESSION_MSG, chat_id=msg.chat.id, filters=filters.text, timeout=60)
-                except:
-                    await bot.send_message(msg.from_user.id, "Error!!\n\nRequest timed out.\nRestart by using /make_config", reply_to_message_id=msg.id)
-                    return
+            new_account = {
+                "Session_String": session.text,
+                "OwnerUid": AccountHolder['id'],
+                "OwnerName": AccountHolder['first_name']
+            }
+            NewConfig["accounts"].append(new_account)
 
-                if config_path.exists():
+            with open(config_path, 'w', encoding='utf-8') as file:
+                json.dump(NewConfig, file, indent=4)
 
-                    for acocunt in config['accounts']:
-                        if acocunt['Session_String'] == session.text:
-                            return await msg.reply_text(text=f"**{acocunt['OwnerName']} account already exist in config you can't add same account multiple times 🤡**\n\n Error !")
+        except Exception as e:
+            print(e)
 
-                # Run a shell command and capture its output
-                try:
-
-                    process = subprocess.Popen(
-                        ["python", f"login.py",
-                            f"{config['Target']}", f"{session.text}"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                    )
-                except Exception as err:
-                    await bot.send_message(msg.chat.id, text=f"<b>ERROR :</b>\n<pre>{err}</pre>")
-
-                # Use communicate() to interact with the process
-                stdout, stderr = process.communicate()
-
-                # Get the return code
-                return_code = process.wait()
-
-                # Check the return code to see if the command was successful
-                if return_code == 0:
-                    # Print the output of the command
-                    print("Command output:")
-                    # Assuming output is a bytes object
-                    output_bytes = stdout
-                    # Decode bytes to string and replace "\r\n" with newlines
-                    output_string = output_bytes.decode(
-                        'utf-8').replace('\r\n', '\n')
-                    print(output_string)
-                    AccountHolder = json.loads(output_string)
-
-                else:
-                    # Print the error message if the command failed
-                    print("Command failed with error:")
-                    print(stderr)
-                    return await msg.reply_text('**Something Went Wrong Kindly Check your Inputs Whether You Have Filled Correctly or Not !**')
-
-                try:
-
-                    new_account = {
-                        "Session_String": session.text,
-                        "OwnerUid": AccountHolder['id'],
-                        "OwnerName": AccountHolder['first_name']
-                    }
-                    config["accounts"].append(new_account)
-
-                    with open(config_path, 'w', encoding='utf-8') as file:
-                        json.dump(config, file, indent=4)
-                except Exception as e:
-                    print(e)
-
-            acocunt_btn = [
-                [InlineKeyboardButton(
-                    text='Accounts You Added', callback_data='account_config')]
-            ]
-            await msg.reply_text(text=Txt.MAKE_CONFIG_DONE_MSG.format(n.text), reply_to_message_id=n.id, reply_markup=InlineKeyboardMarkup(acocunt_btn))
+        await ms.edit(text="**Akun Berhasil Ditambahkan**\n\nKlik tombol di bawah untuk melihat semua akun yang telah Anda tambahkan 👇.", reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton(text='Akun yang Anda Tambahkan', callback_data='account_config')]]))
 
     except Exception as e:
-        print('Error on line {}'.format(
-            sys.exc_info()[-1].tb_lineno), type(e).__name__, e)
+        print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno), type(e).__name__, e)
 
 
-@Client.on_message(filters.private & filters.chat(Config.SUDO) & filters.command('see_accounts'))
-async def see_account(bot: Client, msg: Message):
-
+@Client.on_message(filters.private & filters.user(Config.SUDO) & filters.command('target'))
+async def target(bot: Client, cmd: Message):
     try:
+        if config_path.exists():
+            with open(config_path, 'r', encoding='utf-8') as file:
+                config = json.load(file)
+        else:
+            return await cmd.reply_text(text="Anda belum membuat konfigurasi! \n\n Silakan buat konfigurasi dengan menggunakan /make_config", reply_to_message_id=cmd.id)
 
-        config = (json.load(open("config.json")))['accounts']
-        acocunt_btn = [
-            [InlineKeyboardButton(text='Accounts You Added',
-                                  callback_data='account_config')]
+        Info = await bot.get_chat(config['Target'])
+
+        btn = [
+            [InlineKeyboardButton(text='Ubah Target', callback_data='chgtarget')]
         ]
-        await msg.reply_text(text=Txt.ADDED_ACCOUNT.format(len(config)), reply_to_message_id=msg.id, reply_markup=InlineKeyboardMarkup(acocunt_btn))
 
-    except:
-        return await msg.reply_text(text="**You Don't Have Added Any Accounts 0️⃣**\n\nUse /make_config to add accounts 👥", reply_to_message_id=msg.id)
+        text = f"Nama Channel :- <code> {Info.title} </code>\nUsername Channel :- <code> @{Info.username} </code>\nID Chat Channel :- <code> {Info.id} </code>"
+
+        await cmd.reply_text(text=text, reply_to_message_id=cmd.id, reply_markup=InlineKeyboardMarkup(btn))
+    except Exception as e:
+        print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno), type(e).__name__, e)
+
+
+@Client.on_message(filters.private & filters.user(Config.SUDO) & filters.command('del_config'))
+async def delete_config(bot: Client, cmd: Message):
+    btn = [
+        [InlineKeyboardButton(text='Ya', callback_data='delconfig-yes')],
+        [InlineKeyboardButton(text='Tidak', callback_data='delconfig-no')]
+    ]
+
+    await cmd.reply_text(text="**⚠️ Apakah Anda Yakin?**\n\nAnda ingin menghapus Konfigurasi.", reply_to_message_id=cmd.id, reply_markup=InlineKeyboardMarkup(btn))
